@@ -161,6 +161,6 @@ main = do
   print ellipsoid
   let randPtGen = randPtIn ellipsoid
   stdGen <- getStdGen
-  let pts = runIdentity $ evalStateT (repeatM 10000 randPtGen) stdGen
+  let pts = evalState (repeatM 10000 randPtGen) stdGen
       tups = (list2tup . toList) `map` pts 
   plotDots [] tups 

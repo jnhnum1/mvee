@@ -4,23 +4,25 @@ import Control.Monad
 import Control.Monad.State.Class
 import Control.Monad.State.Strict
 
+import Data.Ellipsoid.Examples.Car
+
 import Data.Functor
 import Data.Functor.Identity
+import Data.List(tails, find)
+import Data.Maybe(fromJust)
 import Data.Packed.Matrix
 
 import Graphics.Gnuplot.Simple
 
 import Foreign.Storable
 
-import Numeric.Container
+import Numeric.Container hiding (find)
 import Numeric.LinearAlgebra.Algorithms
 import Numeric.LinearAlgebra.Util
 
 import System.Random
 
 import Prelude hiding (max)
-
-import Car
 
 type Point = Vector Double
 
@@ -37,20 +39,9 @@ findMax (x:xs) =
       then (0, x)
       else (1 + i, m)
 
--- TODO this whole function is a pretty big memory leak.  I thought I was being
--- all elegant with it, but no.  I should find another way of expressing what I
--- wanted.
--- > iterateCollect f x
--- > [[x], [f x, x], [f f x, f x, x], ... ]
-iterateCollect :: (a -> a) -> a -> [[a]]
-iterateCollect f x =
-  let y = [x] : (map addF y)
-  in y
-    where addF xs@(x:_) = (f x) : xs
-
 iterateUntil :: ([a] -> Bool) -> (a -> a) -> a -> a
 iterateUntil pred f x =
-  head $ head $ dropWhile (not . pred) (iterateCollect f x)
+  head . fromJust . find pred . tails $ iterate f x 
 
 -- In the absence of the ST monad, can use this to update an index of a vector
 -- according to a given transformation function.
@@ -166,12 +157,10 @@ main = do
       scale 0.5 $ ident 5)
   let randPtGen = randPtIn initEllipsoid
   stdGen <- getStdGen
-  forM_ [100, 1000, 10000] 
-    (\numPts -> do
+  forM_ [100, 1000, 10000] $ \numPts -> do
       let pts = evalState (repeatM numPts randPtGen) stdGen
           afterPts = map (toVector . stepCar 5 . fromVector) pts
           afterEllipsoid = mvee 1e-3 afterPts
           tups = (list2tup (0, 1) . toList) `map` afterPts
       print afterEllipsoid
       plotDots [] tups
-    )

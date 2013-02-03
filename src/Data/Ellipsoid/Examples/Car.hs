@@ -1,5 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TemplateHaskell  #-}
-module Car (
+module Data.Ellipsoid.Examples.Car (
   Vectorizable(..),
   Loc,
   mkLoc,

@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Data.Ellipsoid(
   Point,
   Ellipsoid,
@@ -28,6 +30,27 @@ type Point = Vector Double
 -- the ellipsoid (c, A) is the set of points x such that
 -- (x - c)'A(x - c) <= 1
 type Ellipsoid = (Point, Matrix Double)
+
+newtype Diag a = Diag {getDiag :: [Vector a]}
+diag2 :: Storable a => Vector a -> Diag a
+diag2 v = Diag $ do
+    x <- toList v
+    return $ 1 |> [x]
+
+instance Mul Diag Diag Diag where
+  (Diag d) <> (Diag f) = 
+    Diag $ zipWith vvMul d f
+      where vvMul a b = flatten $fromRows [a] `multiply` fromColumns [b]
+
+
+-- instance Mul Diag Matrix Matrix where
+--   (Diag d) <> m =
+--     let 
+--     fromRows $ zipWith (*) (toList d) (toRows m)
+
+-- instance Mul Matrix Diag Matrix where
+--   m <> (Diag d) =
+--     fromColumns $ zipWith (*) (toList d) (toColumns m)
 
 -- TODO make tail-recursive
 findMax :: Ord a => [a] -> (Int, a)

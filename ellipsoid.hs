@@ -1,3 +1,5 @@
+module Ellipsoid where
+
 import Control.Monad
 import Control.Monad.State.Class
 import Control.Monad.State.Strict
@@ -18,6 +20,8 @@ import System.Random
 
 import Prelude hiding (max)
 
+import Car
+
 type Point = Vector Double
 
 -- the ellipsoid (c, A) is the set of points x such that
@@ -33,6 +37,9 @@ findMax (x:xs) =
       then (0, x)
       else (1 + i, m)
 
+-- TODO this whole function is a pretty big memory leak.  I thought I was being
+-- all elegant with it, but no.  I should find another way of expressing what I
+-- wanted.
 -- > iterateCollect f x
 -- > [[x], [f x, x], [f f x, f x, x], ... ]
 iterateCollect :: (a -> a) -> a -> [[a]]
@@ -120,15 +127,12 @@ randomRM bounds = do
 -- takes a dimension and returns a monadic computation of a random point in the unit sphere of tha dimension.
 -- NOTE this is not currently uniform sampling from the ball.
 randPtInUnit :: (RandomGen g, MonadState g m) => Int -> m Point
-randPtInUnit n = 
-  (fromList . snd) `liftM` helper n
-  where
-    helper 0 = return (0, [])
-    helper n = do
-      (normSoFarSq, coordsSoFar) <- helper (n - 1)
-      let coordBound = sqrt (1 - normSoFarSq)
-      nextCoord <- randomRM (-coordBound, coordBound)
-      return (nextCoord^2 + normSoFarSq, nextCoord : coordsSoFar)
+randPtInUnit n {- dimension -} = 
+  do
+    p <- fromList `liftM` replicateM n (randomRM (-1, 1))
+    if pnorm Frobenius p <= 1
+      then return p
+      else randPtInUnit n
 
 -- Note that a unit ball is characterized by (x - c)'(x - c) <= 1
 -- An ellipsoid which is a transformation by A of the unit ball is 
@@ -152,15 +156,22 @@ repeatM n m =
   sequence $ replicate n m
 
 -- blargh
-list2tup :: [a] -> (a, a)
-list2tup [x, y] = (x, y)
+list2tup :: (Int, Int) -> [a] -> (a, a)
+list2tup (i, j) coords = (coords !! i, coords !! j)
 
 main = do
-  let points = fromList <$> [[1,0],[0,1],[-1, 0]]
-      ellipsoid = mvee 1e-4 points
-  print ellipsoid
-  let randPtGen = randPtIn ellipsoid
+  let 
+    initEllipsoid = 
+      (toVector $ mkCar (mkLoc 25 7.5) (mkLoc 15 7.5) 0,
+      scale 0.5 $ ident 5)
+  let randPtGen = randPtIn initEllipsoid
   stdGen <- getStdGen
-  let pts = evalState (repeatM 10000 randPtGen) stdGen
-      tups = (list2tup . toList) `map` pts 
-  plotDots [] tups 
+  forM_ [100, 1000, 10000] 
+    (\numPts -> do
+      let pts = evalState (repeatM numPts randPtGen) stdGen
+          afterPts = map (toVector . stepCar 5 . fromVector) pts
+          afterEllipsoid = mvee 1e-3 afterPts
+          tups = (list2tup (0, 1) . toList) `map` afterPts
+      print afterEllipsoid
+      plotDots [] tups
+    )

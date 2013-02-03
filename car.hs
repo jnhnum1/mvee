@@ -1,4 +1,11 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TemplateHaskell  #-}
+module Car (
+  Vectorizable(..),
+  Loc,
+  mkLoc,
+  Car,
+  mkCar,
+  stepCar) where
 
 import Control.Lens
 import Control.Lens.TH
@@ -17,18 +24,22 @@ class Vectorizable a s | a -> s where
 data Loc = Loc {_x :: Double, _y :: Double} deriving (Show)
 makeLenses ''Loc
 
+mkLoc x y = Loc x y
+
 data Car = Car {_front :: Loc, _back :: Loc, _angle :: Double} deriving (Show)
 makeLenses ''Car
 
+mkCar f b t = Car f b t
+
 instance Vectorizable Car Double where
-  toVector (Car f b t) = fromList [(_x f), (_y f), (_x b), (_y b), t]
+  toVector (Car f b t) = fromList [f^.x, f^.y, b^.x, b^.y, t]
   fromVector v = 
     let
       [xf, yf, xb, yb, t] = toList v
     in Car (Loc xf yf) (Loc xb yb) t
 
-stepCar :: Double -> Double -> Car -> Car
-stepCar v dt car = 
+stepCar :: Double -> Car -> Car
+stepCar v car = 
   let
     yl = car^.front.y - car^.back.y
     xl = car^.front.x - car^.back.x
@@ -44,4 +55,4 @@ stepCar v dt car =
   in car & front.x +~ dx & front.y +~ dy & back.x +~ q * coa 
          & back.y +~ q * sia
 
-main = print $ (Car (Loc 1 2) (Loc 3 4) 5)
+-- main = print $ toVector `map` iterate (stepCar 5) (Car (Loc 25 7.5) (Loc 15 7.5) 0.5)

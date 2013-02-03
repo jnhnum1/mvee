@@ -11,11 +11,6 @@ import Control.Lens
 
 import Data.Packed.Vector
 
--- sigh, most recent version of lens package isn't on hackage
-infixl 1 &
-(&) :: a -> (a -> b) -> b
-a & f = f a
-
 class Vectorizable a s | a -> s where
   toVector :: a -> Vector s
   fromVector :: Vector s -> a

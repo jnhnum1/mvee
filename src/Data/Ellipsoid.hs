@@ -1,23 +1,22 @@
-module Ellipsoid where
+module Data.Ellipsoid(
+  Point,
+  Ellipsoid,
+  randPtIn,
+  mvee,
+  volumeFactor,
+  VolumeOrd) where
 
 import Control.Monad
 import Control.Monad.State.Class
-import Control.Monad.State.Strict
 
-import Data.Ellipsoid.Examples.Car
-
-import Data.Functor
-import Data.Functor.Identity
 import Data.List(tails, find)
 import Data.Maybe(fromJust)
 import Data.Packed.Matrix
 
-import Graphics.Gnuplot.Simple
-
-import Foreign.Storable
+import Foreign.Storable (Storable)
 
 import Numeric.Container hiding (find)
-import Numeric.LinearAlgebra.Algorithms
+import Numeric.LinearAlgebra.Algorithms (chol,inv,det,pnorm,NormType(..))
 import Numeric.LinearAlgebra.Util
 
 import System.Random
@@ -40,14 +39,14 @@ findMax (x:xs) =
       else (1 + i, m)
 
 iterateUntil :: ([a] -> Bool) -> (a -> a) -> a -> a
-iterateUntil pred f x =
-  head . fromJust . find pred . tails $ iterate f x 
+iterateUntil predicate f x =
+  head . fromJust . find predicate . tails $ iterate f x 
 
 -- In the absence of the ST monad, can use this to update an index of a vector
 -- according to a given transformation function.
 modifyVec :: (Storable a) => Int -> (a->a) -> Vector a -> Vector a
-modifyVec i f v =
-  mapVectorWithIndex g v
+modifyVec i f =
+  mapVectorWithIndex g
     where 
       g j vj =
         if i == j 
@@ -56,6 +55,7 @@ modifyVec i f v =
 
 -- mvee eps pts approximately computes the minimum volume ellipsoid containing
 -- all the points, where eps is a small number used for convergence testing.
+-- TODO there is still a big memory leak in here somewhere. search and destroy.
 mvee :: Double -> [Point] -> Ellipsoid
 mvee eps pts =
   let d :: Num a => a -- stupid monomorphism restriction
@@ -74,11 +74,11 @@ mvee eps pts =
       q' = trans q
 
       u0 :: Vector Double
-      u0 = scale (1 / numPts) (numPts |> (repeat 1))
+      u0 = scale (1 / numPts) (numPts |> repeat 1)
 
       withinThreshold :: [Vector Double] -> Bool
       withinThreshold [] = False
-      withinThreshold [x] = False
+      withinThreshold [_] = False
       withinThreshold (x : y : _) = norm (x - y) < eps
 
       updateU :: Vector Double -> Vector Double
@@ -92,7 +92,7 @@ mvee eps pts =
     let u = iterateUntil withinThreshold updateU u0
         pu = p <> u
         puMat = asColumn pu
-    in (pu, (1 / d) * inv (p <> (diag u) <> (trans p) - puMat <> (trans puMat))) -- ugly :(
+    in (pu, (1 / d) * inv ((p <> diag u <> trans p) - (puMat <> trans puMat))) -- ugly :(
 
 newtype VolumeOrd = VolumeOrd {getEllipsoid :: Ellipsoid} deriving (Eq)
 instance Ord VolumeOrd where
@@ -142,25 +142,3 @@ randPtIn (center, mat) = let
       unitPt <- randPtInUnit (dim center)
       return $ (upperInv <> unitPt) + center
 
-repeatM :: (Monad m) => Int -> m a -> m [a]
-repeatM n m =
-  sequence $ replicate n m
-
--- blargh
-list2tup :: (Int, Int) -> [a] -> (a, a)
-list2tup (i, j) coords = (coords !! i, coords !! j)
-
-main = do
-  let 
-    initEllipsoid = 
-      (toVector $ mkCar (mkLoc 25 7.5) (mkLoc 15 7.5) 0,
-      scale 0.5 $ ident 5)
-  let randPtGen = randPtIn initEllipsoid
-  stdGen <- getStdGen
-  forM_ [100, 1000, 10000] $ \numPts -> do
-      let pts = evalState (repeatM numPts randPtGen) stdGen
-          afterPts = map (toVector . stepCar 5 . fromVector) pts
-          afterEllipsoid = mvee 1e-3 afterPts
-          tups = (list2tup (0, 1) . toList) `map` afterPts
-      print afterEllipsoid
-      plotDots [] tups

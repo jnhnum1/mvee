@@ -8,7 +8,6 @@ module Data.Ellipsoid.Examples.Car (
   stepCar) where
 
 import Control.Lens
-import Control.Lens.TH
 
 import Data.Packed.Vector
 
@@ -24,12 +23,14 @@ class Vectorizable a s | a -> s where
 data Loc = Loc {_x :: Double, _y :: Double} deriving (Show)
 makeLenses ''Loc
 
-mkLoc x y = Loc x y
+mkLoc :: Double -> Double -> Loc
+mkLoc = Loc
 
 data Car = Car {_front :: Loc, _back :: Loc, _angle :: Double} deriving (Show)
 makeLenses ''Car
 
-mkCar f b t = Car f b t
+mkCar :: Loc -> Loc -> Double -> Car
+mkCar = Car
 
 instance Vectorizable Car Double where
   toVector (Car f b t) = fromList [f^.x, f^.y, b^.x, b^.y, t]
@@ -47,8 +48,8 @@ stepCar v car =
     h = sqrt $ yl * yl + xl * xl
     coa = xl / h
     sia = yl / h
-    dy = v * ((sin theta) * coa + (cos theta) * sia)
-    dx = v * ((cos theta) * coa - (sin theta) * sia)
+    dy = v * (sin theta * coa + cos theta * sia)
+    dx = v * (cos theta * coa - sin theta * sia)
     tt = (dx + xl) * coa + (dy + yl) * sia
     q = dx * coa + xl * coa + dy * sia + yl * sia -
       0.5 * sqrt (4*tt^2 - 4*(dx^2 + 2*dx*xl + dy^2 + 2*dy*yl))

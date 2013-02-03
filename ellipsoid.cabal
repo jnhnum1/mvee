@@ -11,6 +11,7 @@ bug-reports:   http://github.com/jnhnum1/mvee/issues
 build-type:    Simple
 
 Executable carExperiment
+  ghc-options:   -Wall
   build-depends: transformers,
     mtl,
     hmatrix,

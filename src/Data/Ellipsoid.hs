@@ -1,4 +1,5 @@
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances #-}
 
 module Data.Ellipsoid(
   Point,
@@ -6,7 +7,7 @@ module Data.Ellipsoid(
   randPtIn,
   mvee,
   volumeFactor,
-  VolumeOrd) where
+  VolumeOrd) where 
 
 import Control.Monad
 import Control.Monad.State.Class
@@ -34,9 +35,9 @@ type Point = Vector Double
 -- (x - c)'A(x - c) <= 1
 type Ellipsoid = (Point, Matrix Double)
 
-
 -- sigh, hacking around the poorly designed hmatrix api
 class Mul a b c | a b -> c where
+  infixl 7 <>
   (<>) :: a -> b -> c
 
 instance (Product e) => Mul (Matrix e) (Matrix e) (Matrix e) where
@@ -47,6 +48,17 @@ instance (Product e) => Mul (Matrix e) (Vector e) (Vector e) where
 
 instance (Product e) => Mul (Vector e) (Matrix e) (Vector e) where
   (<>) = (C.<>)
+
+newtype Diag a = Diag [a]
+
+-- instance (Num a) => Mul (Diag a) (Diag a) (Diag a) where
+  -- (Diag d) <> (Diag f) = Diag $ zipWith (*) d f
+
+-- instance (Container Vector a) => Mul (Diag a) (Matrix a) (Matrix a) where
+  -- (Diag d) <> m = fromRows $ zipWith scale d (toRows m)
+
+instance (Container Vector a) => Mul (Matrix a) (Diag a) (Matrix a) where
+  m <> (Diag d) = fromColumns $ zipWith scale d (toColumns m)
 
 -- TODO make tail-recursive
 findMax :: Ord a => [a] -> (Int, a)
@@ -71,6 +83,11 @@ modifyVec i f =
         if i == j 
           then f vj
           else vj
+
+-- diagMult a b = takeDiag (a <> b)
+diagMult :: Product e => Matrix e -> Matrix e -> Vector e
+diagMult a b = 
+  fromList $ zipWith dot (toRows a) (toColumns b)
 
 -- mvee eps pts approximately computes the minimum volume ellipsoid containing
 -- all the points, where eps is a small number used for convergence testing.
@@ -98,12 +115,15 @@ mvee eps pts =
       withinThreshold :: [Vector Double] -> Bool
       withinThreshold [] = False
       withinThreshold [_] = False
-      withinThreshold (x : y : _) = trace "x" $ norm (x - y) < eps
+      withinThreshold (x : y : _) = 
+        let
+          diff = norm (x - y)
+        in trace (show diff) (diff < eps)
 
       updateU :: Vector Double -> Vector Double
       updateU u =
-        let x = q <> diag u <> q' -- holy shit this is multiplying by a numPts x numPts matrix.  unnecessary
-            m = takeDiag $ q' <> inv x <> q
+        let x = q <> Diag (toList u) <> q'
+            m = diagMult q' (inv x <> q)
             (i, max) = findMax $ toList m
             step_size = (max - d - 1)  / ((d + 1) * (max - 1))
         in modifyVec i (+step_size) (scale (1 - step_size) u)
@@ -111,7 +131,8 @@ mvee eps pts =
     let u = iterateUntil withinThreshold updateU u0
         pu = p <> u
         puMat = asColumn pu
-    in (pu, (1 / d) * inv ((p <> diag u <> trans p) - (puMat <> trans puMat))) -- ugly :(
+    in (pu, scale (1 / d) $ inv $ p <> Diag (toList u) <> trans p -
+                                  puMat <> trans puMat)
 
 newtype VolumeOrd = VolumeOrd {getEllipsoid :: Ellipsoid} deriving (Eq)
 instance Ord VolumeOrd where
@@ -156,7 +177,8 @@ randPtInUnit n {- dimension -} =
 -- from the unit ball, and then applying A.
 randPtIn :: (RandomGen g, MonadState g m) => Ellipsoid -> m Point
 randPtIn (center, mat) = let
-  upperInv = inv (chol mat) in
+  symmetrized = scale 0.5 (mat + trans mat)
+  upperInv = inv (chol symmetrized) in
     do
       unitPt <- randPtInUnit (dim center)
       return $ (upperInv <> unitPt) + center

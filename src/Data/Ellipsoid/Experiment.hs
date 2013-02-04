@@ -23,12 +23,19 @@ main = do
       scale 0.5 $ ident 5)
   let randPtGen = randPtIn initEllipsoid
   stdGen <- getStdGen
-  forM_ [8000] $ \numPts -> do
+  forM_ [100, 1000, 10000] $ \numPts -> do
       let pts = evalState (replicateM numPts randPtGen) stdGen
           afterPts = map (toVector . stepCar 5 . fromVector) pts
       print afterPts
       let
           afterEllipsoid = mvee 1e-3 afterPts
-          tups = (list2tup (0, 1) . toList) `map` afterPts
+          postSamples = evalState (replicateM numPts (randPtIn afterEllipsoid)) stdGen
+          tups = (list2tup (0, 1) . toList) `map` postSamples
       print afterEllipsoid
       plotDots [] tups
+
+
+-- main = do
+  -- let test = mvee 1e-3 [2 |> [0.1,1], 2 |> [0, -1], 2 |> [1,0],
+        -- 2|> [74, 80]]
+  -- print test

@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
+
 module Data.Ellipsoid(
   Point,
   Ellipsoid,
@@ -13,9 +15,12 @@ import Data.List(tails, find)
 import Data.Maybe(fromJust)
 import Data.Packed.Matrix
 
+import Debug.Trace
+
 import Foreign.Storable (Storable)
 
-import Numeric.Container hiding (find)
+import Numeric.Container hiding (find, Mul(..))
+import qualified Numeric.Container as C
 import Numeric.LinearAlgebra.Algorithms (chol,inv,det,pnorm,NormType(..))
 import Numeric.LinearAlgebra.Util
 
@@ -28,6 +33,20 @@ type Point = Vector Double
 -- the ellipsoid (c, A) is the set of points x such that
 -- (x - c)'A(x - c) <= 1
 type Ellipsoid = (Point, Matrix Double)
+
+
+-- sigh, hacking around the poorly designed hmatrix api
+class Mul a b c | a b -> c where
+  (<>) :: a -> b -> c
+
+instance (Product e) => Mul (Matrix e) (Matrix e) (Matrix e) where
+  (<>) = (C.<>)
+
+instance (Product e) => Mul (Matrix e) (Vector e) (Vector e) where
+  (<>) = (C.<>)
+
+instance (Product e) => Mul (Vector e) (Matrix e) (Vector e) where
+  (<>) = (C.<>)
 
 -- TODO make tail-recursive
 findMax :: Ord a => [a] -> (Int, a)
@@ -79,11 +98,11 @@ mvee eps pts =
       withinThreshold :: [Vector Double] -> Bool
       withinThreshold [] = False
       withinThreshold [_] = False
-      withinThreshold (x : y : _) = norm (x - y) < eps
+      withinThreshold (x : y : _) = trace "x" $ norm (x - y) < eps
 
       updateU :: Vector Double -> Vector Double
       updateU u =
-        let x = q <> diag u <> q'
+        let x = q <> diag u <> q' -- holy shit this is multiplying by a numPts x numPts matrix.  unnecessary
             m = takeDiag $ q' <> inv x <> q
             (i, max) = findMax $ toList m
             step_size = (max - d - 1)  / ((d + 1) * (max - 1))

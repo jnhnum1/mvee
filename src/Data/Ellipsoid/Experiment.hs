@@ -23,7 +23,7 @@ main = do
       scale 0.5 $ ident 5)
   let randPtGen = randPtIn initEllipsoid
   stdGen <- getStdGen
-  forM_ [10000] $ \numPts -> do
+  forM_ [8000] $ \numPts -> do
       let pts = evalState (replicateM numPts randPtGen) stdGen
           afterPts = map (toVector . stepCar 5 . fromVector) pts
       print afterPts

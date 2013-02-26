@@ -4,13 +4,13 @@
 module Data.Ellipsoid(
   Point,
   Ellipsoid,
-  randPtIn,
   mvee,
   project,
   volumeFactor,
-  sampleImage,
+  randomSample,
   ellipsoidDim,
   transformFromUnit,
+  ImageSamples,
   VolumeOrd) where 
 
 import Control.Monad
@@ -34,22 +34,23 @@ import System.Random
 import Prelude hiding (max)
 
 type Point = Vector Double
+type ImageSamples = [Point]
 type Index = Int
 
--- the ellipsoid (c, L^t) is the set of points x such that
+-- the ellipsoid (c, L^t, L^-t) is the set of points x such that
 -- (x - c)'LL^T(x - c) <= 1
 -- equivalently
 -- (c + L^-t w), for ||w|| <= 1
 -- equivalently
 -- {x | ||L^t(x - c)|| <= 1}
-type Ellipsoid = (Point, Matrix Double)
+type Ellipsoid = (Point, Matrix Double, Matrix Double)
 
 ellipsoidDim :: Ellipsoid -> Int
-ellipsoidDim (c, mat) = rows mat
+ellipsoidDim (_, mat, _) = rows mat
 
 transformFromUnit :: Ellipsoid -> Vector Double -> Vector Double
-transformFromUnit (c, mat) v = 
-  c + (inv mat) <> v
+transformFromUnit (c, _, invmat) v = 
+  c + invmat <> v
 
 lq :: Field t => Matrix t -> (Matrix t, Matrix t)
 lq mat = 
@@ -58,14 +59,14 @@ lq mat =
 -- see https://tcg.mae.cornell.edu/pubs/Pope_FDA_08.pdf
 -- Produces an ellipsoid projected onto the given axes
 project :: Ellipsoid -> [Vector Double] -> Ellipsoid
-project (c, lt) basis = 
+project (c, lt, ltinv) basis = 
   let t = fromColumns basis
       t' = trans t
       c' = t' <> c
-      (u, s) = leftSV $ t' <> inv lt
+      (u, s) = leftSV $ t' <> ltinv
       (l', _) = lq $ u <> inv (diag s)
   in
-    (c', l')
+    (c', l', inv l')
 
 -- sigh, hacking around the poorly designed hmatrix api
 -- this class replaces the hmatrix's Mul class.
@@ -138,8 +139,8 @@ diagMult a b =
 -- all the points, where eps is a small number used for convergence testing.
 -- This algorithm comes from
 -- http://stackoverflow.com/questions/1768197/bounding-ellipse/1768440#1768440
-mvee :: Double -> [Point] -> Ellipsoid
-mvee eps pts =
+mvee' :: Double -> [Point] -> Ellipsoid
+mvee' eps pts =
   let d :: Num a => a -- stupid monomorphism restriction
       d = fromIntegral $ dim $ head pts
 
@@ -175,8 +176,12 @@ mvee eps pts =
     let u = iterateUntil withinThreshold updateU u0
         pu = p <> u
         puMat = asColumn pu
-    in trace "mvee done" $ (pu, chol $ symmetrized $ scale (1 / d) $ inv $ 
-                  p <> Diag (toList u) <> trans p - puMat <> trans puMat)
+        lt = chol $ symmetrized $ scale (1 / d) $ inv $ 
+                  p <> Diag (toList u) <> trans p - puMat <> trans puMat
+    in trace "mvee done" $ (pu, lt, inv lt)
+
+mvee :: [Point] -> Ellipsoid
+mvee = mvee' 1e-3
 
 newtype VolumeOrd = VolumeOrd {getEllipsoid :: Ellipsoid} deriving (Eq)
 instance Ord VolumeOrd where
@@ -185,7 +190,7 @@ instance Ord VolumeOrd where
 
 -- what is the volume of the ellipsoid relative to the unit n-sphere
 volumeFactor :: Ellipsoid -> Double
-volumeFactor (_, mat) = 1 / sqrt (det $ trans mat <> mat)
+volumeFactor (_, mat, _) = 1 / sqrt (det $ trans mat <> mat)
 
 -- A version of randomR which is polymorphic over a monad stack with a MonadState
 -- component storing state of type RandomGen.
@@ -218,19 +223,13 @@ randPtInUnit n {- dimension -} =
 -- So we can generate random points from our ellipsoid by generating them 
 -- from the unit ball, and then applying A.
 randPtIn :: (RandomGen g, MonadState g m) => Ellipsoid -> m Point
-randPtIn (center, mat) = let
-  upperInv = inv mat in
-    do
-      unitPt <- randPtInUnit (dim center)
-      return $ (upperInv <> unitPt) + center
+randPtIn (center, mat, upperInv) = 
+  do
+    unitPt <- randPtInUnit (dim center)
+    return $ (upperInv <> unitPt) + center
 
-sampleImage :: (RandomGen g, MonadState g m) => 
-               Ellipsoid -- ^ initial state
-               -> (Vector Double -> Vector Double) -- ^ transformation
-               -> Int -- ^ num sample points
-               -> m Ellipsoid
-
-sampleImage init transform numPts = do
-  samplePts <- replicateM numPts (randPtIn init)
-  let imagePts = map transform samplePts
-  return $! trace "sample image computed" (mvee 1e-4 imagePts)
+randomSample :: (RandomGen g, MonadState g m) => 
+             Ellipsoid -- ^ sampled ellipsoid
+             -> Int -- ^ the number of sample points
+             -> m ImageSamples
+randomSample init numPts = replicateM numPts (randPtIn init)

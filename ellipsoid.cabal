@@ -21,3 +21,16 @@ Executable carExperiment
     random
   main-is: Data/Ellipsoid/Experiment.hs
   hs-source-dirs: src
+
+Executable test
+  ghc-options:   -Wall -rtsopts -O
+  build-depends: transformers,
+    mtl,
+    hmatrix,
+    gnuplot,
+    base,
+    lens,
+    random,
+    chart
+  main-is: Test.hs
+  hs-source-dirs: src

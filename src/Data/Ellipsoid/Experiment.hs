@@ -1,12 +1,15 @@
 module Main(main) where
+-- module Data.Ellipsoid.Experiment where
 
 import Control.Monad
 import Control.Monad.State.Strict
 
+import Data.Accessor
 import Data.Ellipsoid
 import Data.Ellipsoid.Examples.Car
 
-import Graphics.Gnuplot.Simple
+import Graphics.Rendering.Chart hiding (Vector, Point)
+import Graphics.Rendering.Chart.Gtk
 
 import Numeric.Container
 import System.Random
@@ -15,27 +18,67 @@ import System.Random
 list2tup :: (Int, Int) -> [a] -> (a, a)
 list2tup (i, j) coords = (coords !! i, coords !! j)
 
+unitSample :: Int -- ^ the number of samples per dimensions
+           -> Int -- ^ the number of dimensions
+           -> [Point]
+unitSample k d = 
+  let choices = [-1, -1 + 2 / fromIntegral (k - 1)..1] 
+    in map fromList $ filter withinUnit $ replicateM d choices
+  where
+    withinUnit xs = sum (map (\x -> x^2) xs) <= 1.0001
+
+latticeSample :: Int -- ^ the number of samples per dimension (in the unit
+                     -- ellipsoid)
+              -> Ellipsoid -- the ellipsoid which you are sampling from
+              -> [Point]
+latticeSample k ell = 
+  let dim = ellipsoidDim ell
+      unitSamples = unitSample k dim
+      transformation = transformFromUnit ell -- inverse of l^t
+  in map transformation unitSamples
+
+makeConvergencePlot :: Ellipsoid 
+                    -> (Point -> Point)
+                    -> [Int] -- ^ numbers of samples per dimension
+                    -> PlotPoints Int Double
+makeConvergencePlot ell trans sampleNums =
+  let points = [(i, latticeSample i ell) | i <- sampleNums]
+      volumes = [(i, volumeFactor $ mvee 1e-3 pts) | (i, pts) <- points]
+  in
+    plot_points_values ^= volumes $ defaultPlotPoints
+
+makeRandConvergencePlot :: (RandomGen g, MonadState g m)
+                    => Ellipsoid 
+                    -- ^ the initial ellipsoid from which to sample
+                    -> (Point -> Point) 
+                    -- ^ the transformation to apply to the sample points
+                    -> [Int]
+                    -> Int
+                    -> m (PlotLines Int Double)
+
+makeRandConvergencePlot ell trans numPtses reps = do
+  ptses <- replicateM reps genPoints
+  return $! plot_lines_values ^= ptses
+         $ defaultPlotLines
+  where 
+    genPoints = do
+      ellipsoids <- mapM (sampleImage ell trans) numPtses
+      let volumePts :: [(Int, Double)]
+          volumePts = zip numPtses (map volumeFactor ellipsoids)
+      return $! volumePts
+
 main :: IO ()
 main = do
   let 
     initEllipsoid = 
       (toVector $ mkCar (mkLoc 25 7.5) (mkLoc 15 7.5) 0,
       scale 0.5 $ ident 5)
-  let randPtGen = randPtIn initEllipsoid
   stdGen <- getStdGen
-  forM_ [100, 1000, 10000] $ \numPts -> do
-      let pts = evalState (replicateM numPts randPtGen) stdGen
-          afterPts = map (toVector . stepCar 5 . fromVector) pts
-      print afterPts
-      let
-          afterEllipsoid = mvee 1e-3 afterPts
-          postSamples = evalState (replicateM numPts (randPtIn afterEllipsoid)) stdGen
-          tups = (list2tup (0, 1) . toList) `map` postSamples
-      print afterEllipsoid
-      plotDots [] tups
-
-
--- main = do
-  -- let test = mvee 1e-3 [2 |> [0.1,1], 2 |> [0, -1], 2 |> [1,0],
-        -- 2|> [74, 80]]
-  -- print test
+  let 
+      transform = (toVector . stepCar 5 . fromVector)
+      plot = plot_points_title ^= "MVEE volume" $ 
+          makeConvergencePlot initEllipsoid transform [1..9]
+      layout = layout1_title ^= "Sampling Convergence" 
+             $ layout1_plots ^= [Left (toPlot plot)]
+             $ defaultLayout1
+  renderableToWindow (toRenderable layout) 640 480

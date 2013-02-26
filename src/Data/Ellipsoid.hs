@@ -6,7 +6,11 @@ module Data.Ellipsoid(
   Ellipsoid,
   randPtIn,
   mvee,
+  project,
   volumeFactor,
+  sampleImage,
+  ellipsoidDim,
+  transformFromUnit,
   VolumeOrd) where 
 
 import Control.Monad
@@ -22,7 +26,7 @@ import Foreign.Storable (Storable)
 
 import Numeric.Container hiding (find, Mul(..))
 import qualified Numeric.Container as C
-import Numeric.LinearAlgebra.Algorithms (chol,inv,det,pnorm,NormType(..))
+import Numeric.LinearAlgebra.Algorithms hiding (i, eps)
 import Numeric.LinearAlgebra.Util
 
 import System.Random
@@ -30,12 +34,41 @@ import System.Random
 import Prelude hiding (max)
 
 type Point = Vector Double
+type Index = Int
 
--- the ellipsoid (c, A) is the set of points x such that
--- (x - c)'A(x - c) <= 1
+-- the ellipsoid (c, L^t) is the set of points x such that
+-- (x - c)'LL^T(x - c) <= 1
+-- equivalently
+-- (c + L^-t w), for ||w|| <= 1
+-- equivalently
+-- {x | ||L^t(x - c)|| <= 1}
 type Ellipsoid = (Point, Matrix Double)
 
+ellipsoidDim :: Ellipsoid -> Int
+ellipsoidDim (c, mat) = rows mat
+
+transformFromUnit :: Ellipsoid -> Vector Double -> Vector Double
+transformFromUnit (c, mat) v = 
+  c + (inv mat) <> v
+
+lq :: Field t => Matrix t -> (Matrix t, Matrix t)
+lq mat = 
+  let (q, r) = qr (trans mat)
+  in (trans r, trans q)
+-- see https://tcg.mae.cornell.edu/pubs/Pope_FDA_08.pdf
+-- Produces an ellipsoid projected onto the given axes
+project :: Ellipsoid -> [Vector Double] -> Ellipsoid
+project (c, lt) basis = 
+  let t = fromColumns basis
+      t' = trans t
+      c' = t' <> c
+      (u, s) = leftSV $ t' <> inv lt
+      (l', _) = lq $ u <> inv (diag s)
+  in
+    (c', l')
+
 -- sigh, hacking around the poorly designed hmatrix api
+-- this class replaces the hmatrix's Mul class.
 class Mul a b c | a b -> c where
   infixl 7 <>
   (<>) :: a -> b -> c
@@ -49,13 +82,17 @@ instance (Product e) => Mul (Matrix e) (Vector e) (Vector e) where
 instance (Product e) => Mul (Vector e) (Matrix e) (Vector e) where
   (<>) = (C.<>)
 
+-- This type represents a diagonal matrix, but more space- and
+-- time-efficiently.
 newtype Diag a = Diag [a]
 
--- instance (Num a) => Mul (Diag a) (Diag a) (Diag a) where
-  -- (Diag d) <> (Diag f) = Diag $ zipWith (*) d f
+-- Technically I don't need the first two of these, but they're included for
+-- completeness
+instance (Num a) => Mul (Diag a) (Diag a) (Diag a) where
+  (Diag d) <> (Diag f) = Diag $ zipWith (*) d f
 
--- instance (Container Vector a) => Mul (Diag a) (Matrix a) (Matrix a) where
-  -- (Diag d) <> m = fromRows $ zipWith scale d (toRows m)
+instance (Container Vector a) => Mul (Diag a) (Matrix a) (Matrix a) where
+  (Diag d) <> m = fromRows $ zipWith scale d (toRows m)
 
 instance (Container Vector a) => Mul (Matrix a) (Diag a) (Matrix a) where
   m <> (Diag d) = fromColumns $ zipWith scale d (toColumns m)
@@ -84,14 +121,23 @@ modifyVec i f =
           then f vj
           else vj
 
+-- This takes an almost-symmetric matrix, and makes it symmetric.  This is
+-- necessary if, for example, we want to take the cholesky factorization.
+symmetrized :: Matrix Double -> Matrix Double
+symmetrized mat = scale 0.5 $ mat + trans mat
+
 -- diagMult a b = takeDiag (a <> b)
+-- this is a more efficient way of computing the diagonal of a product of two
+-- matrices.  It is particularly more efficient when, as below, we are
+-- multiplying a (large x few) matrix and a (few x large) matrix.
 diagMult :: Product e => Matrix e -> Matrix e -> Vector e
 diagMult a b = 
   fromList $ zipWith dot (toRows a) (toColumns b)
 
 -- mvee eps pts approximately computes the minimum volume ellipsoid containing
 -- all the points, where eps is a small number used for convergence testing.
--- TODO there is still a big memory leak in here somewhere. search and destroy.
+-- This algorithm comes from
+-- http://stackoverflow.com/questions/1768197/bounding-ellipse/1768440#1768440
 mvee :: Double -> [Point] -> Ellipsoid
 mvee eps pts =
   let d :: Num a => a -- stupid monomorphism restriction
@@ -116,9 +162,7 @@ mvee eps pts =
       withinThreshold [] = False
       withinThreshold [_] = False
       withinThreshold (x : y : _) = 
-        let
-          diff = norm (x - y)
-        in trace (show diff) (diff < eps)
+        norm (x - y) < eps
 
       updateU :: Vector Double -> Vector Double
       updateU u =
@@ -131,19 +175,17 @@ mvee eps pts =
     let u = iterateUntil withinThreshold updateU u0
         pu = p <> u
         puMat = asColumn pu
-    in (pu, scale (1 / d) $ inv $ p <> Diag (toList u) <> trans p -
-                                  puMat <> trans puMat)
+    in trace "mvee done" $ (pu, chol $ symmetrized $ scale (1 / d) $ inv $ 
+                  p <> Diag (toList u) <> trans p - puMat <> trans puMat)
 
 newtype VolumeOrd = VolumeOrd {getEllipsoid :: Ellipsoid} deriving (Eq)
 instance Ord VolumeOrd where
-  compare v1 v2 =
-    let (_, mat1) = getEllipsoid v1
-        (_, mat2) = getEllipsoid v2
-    in compare (det mat2) (det mat1)
+  compare (VolumeOrd ell1) (VolumeOrd ell2) = 
+    compare (volumeFactor ell1) (volumeFactor ell2)
 
 -- what is the volume of the ellipsoid relative to the unit n-sphere
 volumeFactor :: Ellipsoid -> Double
-volumeFactor (_, mat) = 1 / sqrt (det mat)
+volumeFactor (_, mat) = 1 / sqrt (det $ trans mat <> mat)
 
 -- A version of randomR which is polymorphic over a monad stack with a MonadState
 -- component storing state of type RandomGen.
@@ -177,9 +219,18 @@ randPtInUnit n {- dimension -} =
 -- from the unit ball, and then applying A.
 randPtIn :: (RandomGen g, MonadState g m) => Ellipsoid -> m Point
 randPtIn (center, mat) = let
-  symmetrized = scale 0.5 (mat + trans mat)
-  upperInv = inv (chol symmetrized) in
+  upperInv = inv mat in
     do
       unitPt <- randPtInUnit (dim center)
       return $ (upperInv <> unitPt) + center
 
+sampleImage :: (RandomGen g, MonadState g m) => 
+               Ellipsoid -- ^ initial state
+               -> (Vector Double -> Vector Double) -- ^ transformation
+               -> Int -- ^ num sample points
+               -> m Ellipsoid
+
+sampleImage init transform numPts = do
+  samplePts <- replicateM numPts (randPtIn init)
+  let imagePts = map transform samplePts
+  return $! trace "sample image computed" (mvee 1e-4 imagePts)
